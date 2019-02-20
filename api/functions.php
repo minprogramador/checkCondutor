@@ -1,7 +1,5 @@
 <?php
 
-#mock condutor.
-
 function xss($data, $problem='') {
     $data = trim($data);
     $data = stripslashes($data);
@@ -73,8 +71,7 @@ function saveToken($token) {
 }
 
 function saveLogs($doc, $dados) {
-    $dt   = date("Y-m-d Y:i:s");
-    $file = "{$doc}_{$dt}.json";
+    $file = "{$doc}.json";
     $arquivo = ".cache/$file";
     $fp = fopen($arquivo, "w");
     fwrite($fp, $dados);
@@ -97,26 +94,49 @@ function getToken() {
     }
 }
 
-function consultar($doc) {
+function checkCache($doc) {
+	$dir = '/var/www/html/condutor/.cache';
+	$file = "{$dir}/$doc.json";
+	if(file_exists($file)) {
 
-	$url = 'http://integracao.detran.savecred.com.br/api/condutor/produto/60/cpf/' . $doc;
-	$auth = getToken();
-
-    if(isset($auth) AND strlen($auth) > 10) {
-        $dados = curl($url, null, null, null, false, $auth);
-
-        if(!stristr($dados, 'DadosCondutor')) {
-            return ['msg' => 'indisponivel'];
-        } else {
-            return $dados;
-        }
-
-    } else {
-        return ['msg' => 'indisponivel'];
-    }
+		$file = file_get_contents($file);
+		return $file;
+	}
+	return false;
 }
 
-function filtroConsulta($dados) {
+function consultar($doc) {
+
+	$dCache = checkCache($doc);
+
+	if($dCache !== false) {
+		$dados = $dCache;
+		$dados = filtroConsulta($dados, 2);
+		return $dados;
+	} else {
+		$url = 'http://integracao.detran.savecred.com.br/api/condutor/produto/60/cpf/' . $doc;
+		$auth = getToken();
+
+	    if(isset($auth) AND strlen($auth) > 10) {
+	        $dados = curl($url, null, null, null, false, $auth);
+	        if(stristr($dados, 'Authorization has been')) {
+	        	saveToken('');
+	        	return consultar($doc);
+	        }
+
+	        if(!stristr($dados, 'DadosCondutor')) {
+	            return ['msg' => 'indisponivel'];
+	        } else {
+	        	$dados = filtroConsulta($dados, 1);
+	            return $dados;
+	        }
+	    } else {
+	        return ['msg' => 'indisponivel'];
+	    }
+	}
+}
+
+function filtroConsulta($dados, $tipo=1) {
 
     if(is_array($dados)) {
         return $dados;
@@ -129,9 +149,11 @@ function filtroConsulta($dados) {
     if(strlen($dadosCondutor->Cpf) < 10) {
         return ['msg' => 'nada_encontrado'];
     } else {
-
-        $doc = xss($dadosCondutor->Cpf);
-        saveLogs($doc, json_encode($retorno));
+    	
+    	if($tipo == 1) {
+        	$doc = xss($dadosCondutor->Cpf);
+        	saveLogs($doc, json_encode($retorno));
+    	}
 
         $dadosCnh = $retorno->DadosCnh;
         $endereco = $retorno->Endereco;
@@ -166,27 +188,3 @@ function filtroConsulta($dados) {
         return $dados;
     }
 }
-
-header("Content-type:application/json");
-
-if(isset($_POST['dados'])) {
-	$doc = xss($_POST['dados']);
-	if(!preg_match("#^([0-9]){3}([0-9]){3}([0-9]){3}([0-9]){2}$#i", $doc)) {
-		$error = ['msg' => 'doc_invalido'];
-        echo json_encode($error);
-        die;
-	}
-} else {
-    $error = ['msg' => false];
-    echo json_encode($error);
-    die;
-}
-
-$dados = consultar($doc);
-$dados = filtroConsulta($dados);
-echo json_encode($dados);
-die;
-
-
-
-
