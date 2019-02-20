@@ -2,8 +2,17 @@
 
 #mock condutor.
 
-function curl($url, $post, $cookies, $header=true, $token=null) {
-    
+function xss($data, $problem='') {
+    $data = trim($data);
+    $data = stripslashes($data);
+    $data = htmlspecialchars($data);
+    $data = strip_tags($data);
+    if ($problem && strlen($data) == 0){ return ($problem); }
+    return $data;
+}
+
+function curl($url, $payload=null, $tipo=null, $cookies=null, $header=true, $token=null) {
+
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_HEADER, $header);
@@ -16,8 +25,14 @@ function curl($url, $post, $cookies, $header=true, $token=null) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 15); 
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
 
-    if ($post) {
-    	curl_setopt($ch, CURLOPT_POST, 1);curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
+    if ($payload) {
+        if($tipo == 'GET') {
+            curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
+        } else {
+            curl_setopt($ch, CURLOPT_POST, 1);
+        }
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
     }
 
     if (isset($cookies)) {
@@ -38,14 +53,47 @@ function geraToken() {
 	$url  = 'http://integracao.detran.savecred.com.br/token';
 	$post = 'grant_type=password&username=gold&password=sssf3f23fasssdjkfljkxxxAxjsdfgyxklkwerfxKsFFFeX3vX';
 
+    $dados = curl($url, $post, 'GET', null, null);
+    if(stristr($dados, 'access_token')) {
+        $dados  = json_decode($dados);
+        $ntoken = $dados->access_token ?? null;
+        if(isset($ntoken)) {
+            return $ntoken;
+        }
+    }
+    return false;
 }
 
 function saveToken($token) {
-	//salvar token em txt?
+    $arquivo = ".token";
+    $fp = fopen($arquivo, "w");
+    fwrite($fp, $token);
+    fclose($fp);
+}
+
+function saveLogs($doc, $dados) {
+    $dt   = date("Y-m-d Y:i:s");
+    $file = "{$doc}_{$dt}.json";
+    $arquivo = ".cache/$file";
+    $fp = fopen($arquivo, "w");
+    fwrite($fp, $dados);
+    fclose($fp);
 }
 
 function getToken() {
-	//return txt token...
+    $token = file_get_contents('.token');
+
+    if(strlen($token) < 5) {
+        $tnovo = geraToken();
+        if(isset($tnovo) AND strlen($tnovo) > 10) {
+            saveToken($tnovo);
+            return $tnovo;
+        } else {
+            return false;
+        }
+    } else {
+        return $token;
+    }
 }
 
 function consultar($doc) {
@@ -53,53 +101,77 @@ function consultar($doc) {
 	$url = 'http://integracao.detran.savecred.com.br/api/condutor/produto/60/cpf/' . $doc;
 	$auth = getToken();
 
-    $dados = file_get_contents('dados.json');
-    return $dados;
-	//set token em headers: = Authorization: bear..
+    if(isset($auth) AND strlen($auth) > 10) {
+        $dados = curl($url, null, null, null, false, $auth);
+
+        if(!stristr($dados, 'DadosCondutor')) {
+            return ['msg' => 'indisponivel'];
+        } else {
+            return $dados;
+        }
+
+    } else {
+        return ['msg' => 'indisponivel'];
+    }
 }
 
 function filtroConsulta($dados) {
+
+    if(is_array($dados)) {
+        return $dados;
+    }
 
     $retorno = json_decode($dados);
 
     $dadosCondutor = $retorno->DadosCondutor;
 
     if(strlen($dadosCondutor->Cpf) < 10) {
-        return ['msg' => 'nada encontrado'];
+        return ['msg' => 'nada_encontrado'];
+    } else {
+
+        $doc = xss($dadosCondutor->Cpf);
+        saveLogs($doc, json_encode($retorno));
+
+        $dadosCnh = $retorno->DadosCnh;
+        $endereco = $retorno->Endereco;
+
+        $dados = [];
+        $dados['dados'] = [
+            'cpf'  => $dadosCondutor->Cpf,
+            'nome' => $dadosCondutor->Nome ?? '-',
+            'nascimento' => $dadosCondutor->DataNascimento ?? '-',
+            'mae' => $dadosCondutor->Mae ?? '-',
+            'pai' => $dadosCondutor->pai ?? '-',
+            'rg'  => $dadosCondutor->Rg ?? '-',
+            'rgOrgao' => $dadosCondutor->OrgaoExpeditor ?? '-',
+            'ufOrgao' => $dadosCondutor->UfExp ?? '-',
+            'renach'  => $dadosCnh->NumeroRenach ?? '-',
+            'registro'    => $dadosCnh->NumeroRegistro ?? '-',
+            'categoria'   => $dadosCnh->Categoria ?? '-',
+            'emissao'     => $dadosCnh->DataEmissao ?? '-',
+            'validade'    => $dadosCnh->Validade ?? '-',
+            'primeiraHab' => $dadosCnh->DataPrimeiraHabilitacao ?? '-',
+        ];
+
+        $dados['endereco'] = [
+            'bairro' => $endereco->Bairro ?? '-',
+            'cep' => $endereco->Cep ?? '-',
+            'complemento' => $endereco->Complemento ?? '-',
+            'logradouro' => $endereco->Logradouro ?? '-',
+            'municipio' => $endereco->Municipio ?? '-',
+            'numero' => $endereco->Numero ?? '-',
+            'uf' => $endereco->Uf ?? '-'
+        ];
+        return $dados;
     }
-    $dadosCnh = $retorno->DadosCnh;
-    $endereco = $retorno->Endereco;
-
-    $dados = [];
-    $dados['dados'] = [
-        'cpf'  => $dadosCondutor->Cpf,
-        'nome' => $dadosCondutor->Nome,
-        'nascimento' => $dadosCondutor->DataNascimento,
-        'mae' => $dadosCondutor->Mae,
-        'pai' => $dadosCondutor->pai,
-        'rg'  => $dadosCondutor->Rg,
-        'rgOrgao' => $dadosCondutor->OrgaoExpeditor,
-        'ufOrgao' => $dadosCondutor->UfExp,
-        'renach'  => $dadosCnh->NumeroRenach,
-        'registro'    => $dadosCnh->NumeroRegistro,
-        'espelho'     => $dadosCnh->NumeroEspelho,
-        'categoria'   => $dadosCnh->Categoria,
-        'emissao'     => $dadosCnh->DataEmissao,
-        'validade'    => $dadosCnh->Validade,
-        'primeiraHab' => $dadosCnh->DataPrimeiraHabilitacao,
-        'obs' => $dadosCnh->Observacao
-    ];
-
-    $dados['endereco'] = $endereco;
-    return $dados;
 }
 
 header("Content-type:application/json");
 
-if(isset($_POST['doc'])) {
-	$doc = $_POST['doc'];
+if(isset($_POST['dados'])) {
+	$doc = xss($_POST['dados']);
 	if(!preg_match("#^([0-9]){3}([0-9]){3}([0-9]){3}([0-9]){2}$#i", $doc)) {
-		$error = ['msg' => 'doc invalido.'];
+		$error = ['msg' => 'doc_invalido'];
         echo json_encode($error);
         die;
 	}
@@ -111,65 +183,8 @@ if(isset($_POST['doc'])) {
 
 $dados = consultar($doc);
 $dados = filtroConsulta($dados);
-//DadosCondutor
 echo json_encode($dados);
 die;
-
-
-
-
-
-/*
-
-    "DadosCondutor": {
-        "Nome": "ADEMILSON DOS SANTOS COSTA",
-        "Cpf": "08707559780",
-        "Mae": "MARIA DE FATIMA F DOS SANTOS",
-        "Pai": "ADECIO ARAUJO DA COSTA",
-        "Uf": null,
-        "DataNascimento": "22/08/1981",
-        "Rg": "125698324 IFP/RJ",
-        "OrgaoExpeditor": null,
-        "UfExp": null
-    },
-    "DadosCnh": {
-        "NumeroRenach": "RJ229465250",
-        "NumeroRegistro": "4006123123",
-        "NumeroEspelho": "1803252642",
-        "Categoria": "D",
-        "DataEmissao": "29/01/2019",
-        "Validade": "28/01/2024",
-        "DataPrimeiraHabilitacao": "26/12/2006",
-        "Observacao": [
-            "11 - Hab. em Curso Transporte Produtos Perigosos",
-            "13 - Hab. em Curso Transporte Coletivo de Passageiro",
-            "15 - Apto para Transporte Remunerado ao veículo"
-        ]
-    },
-    "Endereco": {
-        "Cep": "25231280",
-        "Logradouro": "AVE REPUBLICA",
-        "Complemento": "CASA",
-        "Bairro": "CHACARAS RIO-PETROPOLIS",
-        "Numero": "315",
-        "Municipio": "DUQUE DE CAXIAS",
-        "Uf": "RJ"
-    },
-
-
-*/
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
