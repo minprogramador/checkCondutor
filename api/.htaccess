@@ -1,0 +1,10 @@
+options -Indexes
+
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [QSA,L]
+
+<Files .token>
+order allow,deny
+Deny from all
+</Files>
